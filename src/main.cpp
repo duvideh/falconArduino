@@ -95,7 +95,7 @@ void getMessage (void) {
 
   CAN0.readMsgBuf(&rxId, &len, rxBuf); // Read data: len = data length, buf = data byte(s)
   if (rxId == 0x128) {
-    headlightState = rxBuf[0] //(rxBuf[0] & 0x00); //need to see reading first - autoheadlightson is 0x01, headlightson is 0x02
+    headlightState = rxBuf[0]; //(rxBuf[0] & 0x00); //need to see reading first - autoheadlightson is 0x01, headlightson is 0x02
     }
   if (rxId == 0x353) {
     outsideTemp = rxBuf[4];
@@ -237,7 +237,7 @@ void getMessage (void) {
 //  / ____|  ____|__   __| |  | |  __ \ '/'
 // | (___ | |__     | |  | |  | | |__) |
 //  \___ \|  __|    | |  | |  | |  ___/
-//  ____) | |____   | |  | |__| | |
+//  ____) | |____   | |  | |__| | | 
 // |_____/|______|  |_|   \____/|_|
 //
 void setup() {
