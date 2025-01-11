@@ -10,14 +10,15 @@
 //    Battery voltage analog through voltage divider - 12v socket probably - or, if successful through CAN
 //    Wideband O2 sensor 0-5v analog (to add after install)
 //CAN bus parameters: (hoepfully - will test and add later)
-//    Boost (MAP)
-//    Coolant Temp
-//    Ambient Temp
-//    Headlights status
-//    Intake Air temperature
-//    Battery voltage (maybe)
-//    trans temp???
-// 
+//    Boost (MAP)               0x425 'TurboBoostPressure' in service manual 413-01 - probably to find... - datasheet says OBD pid is 2024 or 0x7E8
+//    Coolant Temp              0x427 in service manual 413-01 - 0x427[0] online, also 0x44D[4] and [5]
+//    Ambient Temp              0x353[4] datasheet
+//    Headlights status         0x128[0]0x02 datasheet
+//    Intake Air temperature    to find... - datasheet says OBD pid is 2024 or 0x7E8
+//    Battery voltage (maybe)   0x427[3] datasheet
+//    trans temp???             to find...
+//    Transmission gear         0x230 in service manual 413-01
+//
 // 
 // 
 
@@ -107,7 +108,7 @@ unsigned long millis200 = 0;
 
 //   CAN0.readMsgBuf(&rxId, &len, rxBuf); // Read data: len = data length, buf = data byte(s)
 //   if (rxId == 0x128) {
-//     headlightState = rxBuf[0]; //(rxBuf[0] & 0x00); //need to see reading first - autoheadlightson is 0x01, headlightson is 0x02
+//     headlightState = rxBuf[0]; //(rxBuf[0] & 0x02); //need to see reading first - autoheadlightson is 0x01, headlightson is 0x02
 //     }
 //   if (rxId == 0x353) {
 //     outsideTemp = rxBuf[4];
@@ -361,7 +362,7 @@ void loop() {
   // get CAN messages
   // getMessage();
   // Serial.print("headlightState = ");
-  // Serial.println(headlightState);
+  // Serial.println(headlightState, BIN);
   // Serial.print("outsideTemp = ");
   // Serial.println(outsideTemp);
   // Serial.print("coolantTemp = ");
