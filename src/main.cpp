@@ -11,14 +11,22 @@
 //    Wideband O2 sensor 0-5v analog (to add after install)
 //CAN bus parameters: (hoepfully - will test and add later)
 //    Boost (MAP)               0x425 'TurboBoostPressure' in service manual 413-01 - probably to find... - datasheet says OBD pid is 2024 or 0x7E8
+//                              0x427 all inactive except 0x427[0], responds to throttle but seems erratic. No 0x7E8 ID. 
 //    Coolant Temp              0x427 in service manual 413-01 - 0x427[0] online, also 0x44D[4] and [5]
+//                              checked 0x427[0], appears to have -40 offset if true - need to check at ambient temp to confirm
 //    Ambient Temp              0x353[4] datasheet
+//                              confirmed, straight hex to dec
 //    Headlights status         0x128[0]0x02 datasheet
+//                              confirmed 0x128[0] becomes 02 when headlights manually activated - 03 when automatically activated
 //    Intake Air temperature    to find... - datasheet says OBD pid is 2024 or 0x7E8
-//    Battery voltage (maybe)   0x427[3] datasheet
-//    trans temp???             to find...
-//    Transmission gear         0x230 in service manual 413-01
 //
+//    Battery voltage (maybe)   0x427[3] datasheet
+//                              confirmed - conversion is hex-dec mutiplied by 0.1
+//    trans temp???             to find...
+//
+//    Transmission gear         0x230 in service manual 413-01
+//                              0x230[0] is gearstick position - 0x3E9[6] appears to be actual trans gear - 0C reverse, 00  neutral, 01 1st 02 2nd etc.
+//    engine oil temp           0x44D[6] - could be coolant temp, need to confirm, appears to have -40 offset
 // 
 // 
 
@@ -46,19 +54,19 @@ float average;                                      //decimal for average
 float battAverage;
 float presAverage;                
 
-// //CAN bus
-// MCP_CAN CAN0(7); // bracketed number is number of CS pin
-// int ex = 0;
-// int why = 0;
-// long unsigned int rxId;
-// unsigned char len = 0;
-// unsigned char rxBuf[8];
-// int outsideTemp = 0;
-// int coolantTemp = 0;
-// int headlightState = 0;
-// int battCAN = 0;
-// int absoluteAir = 0;
-// int MAPvalue = 0;
+//CAN bus
+MCP_CAN CAN0(10); // bracketed number is number of CS pin
+long unsigned int rxId;
+unsigned char len = 0;
+unsigned char rxBuf[8];
+int outsideTemp = 0;
+int coolantTemp = 0;
+int headlightState = 0; // 02 for manually activated headlights, 03 for headlights auto-triggered
+int headlightsON = 0;   // state of dimming
+int battCAN = 0;
+char transGear;
+//int absoluteAir = 0;
+//int MAPvalue = 0;
 
 // //battery voltage 
 // #define battPin A3
@@ -104,23 +112,55 @@ unsigned long millis200 = 0;
 //    __/ |                                     __/ |     
 //   |___/                                     |___/
 
-// void getMessage (void) {   
+void getMessage (void) {   
 
-//   CAN0.readMsgBuf(&rxId, &len, rxBuf); // Read data: len = data length, buf = data byte(s)
-//   if (rxId == 0x128) {
-//     headlightState = rxBuf[0]; //(rxBuf[0] & 0x02); //need to see reading first - autoheadlightson is 0x01, headlightson is 0x02
-//     }
-//   if (rxId == 0x353) {
-//     outsideTemp = rxBuf[4];
-//     }
-//   if (rxId == 0x427) {
-//     coolantTemp = rxBuf[0]; //also at 0x44D[4] and [5]
-//     battCAN = rxBuf[3];
-//     }
-//   if (rxId == 0x44D) {
-//     absoluteAir = rxBuf[7];  //listed as ambient air pressure - could be outside?? - 'turboBoostPressure' listed at 0x425 but no further information
-//     }
-// }
+  CAN0.readMsgBuf(&rxId, &len, rxBuf); // Read data: len = data length, buf = data byte(s)
+  if (rxId == 0x128) {
+    headlightState = rxBuf[0]; //(rxBuf[0] & 0x02); //need to see reading first - autoheadlightson is 0x01, headlightson is 0x02
+    if (headlightState == 02 || 03) {
+      headlightsON = 1;
+    }
+    else {
+      headlightsON = 0;
+      }
+    }
+  if (rxId == 0x353) {
+    outsideTemp = (rxBuf[4],DEC);
+    }
+  if (rxId == 0x3E9) {
+    if (rxBuf[6] == 12) {
+      transGear = 'R';
+    }
+    if (rxBuf[6] == 00) {
+      transGear = 'N';
+    }
+     if (rxBuf[6] == 01) {
+      transGear = '1';
+    }
+    if (rxBuf[6] == 02) {
+      transGear = '2';
+    }
+    if (rxBuf[6] == 03) {
+      transGear = '3';
+    }
+    if (rxBuf[6] == 04) {
+      transGear = '4';
+    }
+    if (rxBuf[6] == 05) {
+      transGear = '5';
+    }
+    if (rxBuf[6] == 06) {
+      transGear = '6';
+    } 
+  }  
+  if (rxId == 0x427) {
+    coolantTemp = (rxBuf[0],DEC)-40;  //-40 offset 
+    battCAN = (rxBuf[3],DEC)*0.1; //multiplied by 0.1
+    }
+  // if (rxId == 0x44D) {
+  //   absoluteAir = rxBuf[7];  //listed as ambient air pressure - could be outside?? - 'turboBoostPressure' listed at 0x425 but no further information
+  //   }
+}
 
 //                      _ _____       _       
 //                     | |_   _|     | |      
