@@ -34,13 +34,11 @@
 #include <math.h>
 #include <mcp_can.h> //library: coryjfowler/mcp_can
 
-
-
 //Oil temperature and pressure sensors
 #define oilTempSensorDivider 5080                       //defines the resistor value that is in series in the voltage divider
 #define oilTempSensorPin A1                             //defines the analog pin of the input voltage from the voltage divider
 #define oilPresSensorPin A2                             //defines the analog pin of the input from oil pressure sensure 0-5v
-int presReading;                                        //int for reading of oilPresSensorPin
+float presReading;                                        //int for reading of oilPresSensorPin
 #define NUMSAMPLES 5                                    //defines the number of samples to be taken for a smooth average
 const float steinconstA = 0.0004133244513630420;        //steinhart equation constant A, determined from wikipedia equations
 const float steinconstB = 0.0002939949352019070;        //steinhart equation constant B, determined from wikipedia equations
@@ -62,7 +60,7 @@ unsigned char rxBuf[8];
 int outsideTemp = 0;
 int coolantTemp = 0;
 int headlightState = 0; // 02 for manually activated headlights, 03 for headlights auto-triggered
-int headlightsON = 0;   // state of dimming
+bool headlightsON = 0;   // state of dimming
 int battCAN = 0;
 char transGear;
 //int absoluteAir = 0;
@@ -78,17 +76,19 @@ char transGear;
 unsigned char incomingData[100];      //received chars
 unsigned char textString[100];        //Chars to send
 unsigned char receivedFloatArray[50]; //Array created form the useful part of the recevied char
-float receivedFloat;                  //float converted from the above array using atof()
-float floatVoltageValue;              //ADC analog value convertedc into voltage (stored as float)
-float floatBoostValue = 0.0;          //remapped range from adc to 0-30
-float floatBoostAdjusted = 0.0;       //parameter to invert values <=14.7 
-float floatLambdaValue = 0.0;         //remapped range from adc to 0.75-1.5
-int   boostInt = 0;                   //floatVoltageValue converted into 0-180 for gauge animation
-int   lambdaInt = 0;                  //quadratic equation to make linear lambda reading into non-linear gauge reading (-240x^2 + 780x - 450)
-int   pressureInt;                    //floatVoltageValue converted into 0-120 for gauge animation
-int   digitsAfterDp = 0;              //number of digits after decimal point in float to send to screen
-long  dwinTimer;                      //read and update screen values every x milliseconds only
-int   backlight = 0;                  //remap of ADC to 0-40 for DWIN backlight
+int   reading = 0;                  //initial read of ADC pin
+int   potReading = 0;               //conversion of ADC pin to 0-180
+int   boostInt = 0;                 //floatVoltageValue converted into 0-180 for gauge animation
+int   lambdaInt = 0;                //quadratic equation to make linear lambda reading into non-linear gauge reading (-240x^2 + 780x - 450)
+int   backlight = 0;                //remap of ADC to 0-40 for DWIN backlight
+float floatVoltageValue = 0.0;      //ADC analog value convertedc into voltage (stored as float)
+float floatBoostValue = 0.0;        //remapped range from adc to 0-30
+float floatBoostAdjusted = 0.0;     //parameter to invert values <=14.7 
+float floatLambdaValue = 0.0;       //remapped range from adc to 0.75-1.5
+float floatReading = 0.00;          //conversion from adc reading integer into float
+int gearPosition;                   //gear position in text - R, N, 1, 2, 3, 4, 5, 6
+float lambdaReading = 2.5;          //5v input from Lambda controller
+float boostReading;                 //not sure yet - input from MAP sensor maybe?
 
 //millis
 unsigned long millis17 = 0;
@@ -129,37 +129,34 @@ void getMessage (void) {
     }
   if (rxId == 0x3E9) {
     if (rxBuf[6] == 12) {
-      transGear = 'R';
+      transGear = 0x52; //R
     }
-    if (rxBuf[6] == 00) {
-      transGear = 'N';
+    else if (rxBuf[6] == 00) {
+      transGear = 0x4E; //N
     }
-     if (rxBuf[6] == 01) {
-      transGear = '1';
+    else if (rxBuf[6] == 01) {
+      transGear = 0x31; //1
     }
-    if (rxBuf[6] == 02) {
-      transGear = '2';
+    else if (rxBuf[6] == 02) {
+      transGear = 0x32; //2
     }
-    if (rxBuf[6] == 03) {
-      transGear = '3';
+    else if (rxBuf[6] == 03) {
+      transGear = 0x33; //3
     }
-    if (rxBuf[6] == 04) {
-      transGear = '4';
+    else if (rxBuf[6] == 04) {
+      transGear = 0x34; //4
     }
-    if (rxBuf[6] == 05) {
-      transGear = '5';
+    else if (rxBuf[6] == 05) {
+      transGear = 0x35; //5
     }
-    if (rxBuf[6] == 06) {
-      transGear = '6';
+    else if (rxBuf[6] == 06) {
+      transGear = 0x36; //6
     } 
   }  
   if (rxId == 0x427) {
     coolantTemp = (rxBuf[0],DEC)-40;  //-40 offset 
-    battCAN = (rxBuf[3],DEC)*0.1; //multiplied by 0.1
+    battCAN = (rxBuf[3],DEC)*0.1;  
     }
-  // if (rxId == 0x44D) {
-  //   absoluteAir = rxBuf[7];  //listed as ambient air pressure - could be outside?? - 'turboBoostPressure' listed at 0x425 but no further information
-  //   }
 }
 
 //                      _ _____       _       
@@ -169,28 +166,74 @@ void getMessage (void) {
 //  \__ \  __/ | | | (_| |_| |_| | | | |_\__ \ /*/
 //  |___/\___|_| |_|\__,_|_____|_| |_|\__|___/
 //                                                                                
+
+void FloatToHex (float f, byte* hex) {
+  byte* f_byte = reinterpret_cast<byte*>(&f); //the value of f_byte is pointer to f
+  memcpy(hex, f_byte, 4);                     //hex: destination, f_byte: source, 4:number of bytes to copy (4 bytes = 32 bit (float))
+}
+
 void sendOilTempInt (int numberToSend) {
   
   Serial1.write(0x5A);                   //Header
   Serial1.write(0xA5);                   //Header
   Serial1.write(2+1+2);                  //Length: VP address + Write command + number low and high bytes
-  Serial1.write(0x82);                   //Write command
+  Serial1.write(0x82);                   //Write command 0x82 for RAM access
   Serial1.write(0x10);                   //Write address to VP address 1000
-  Serial1.write((byte)0x00);             //Write address
+  Serial1.write((byte)0x00);             //
   Serial1.write(highByte(numberToSend)); //integer high byte
   Serial1.write(lowByte(numberToSend));  //integer low byte
 }
 
-void sendOilPresInt (int presNumberToSend) {
+void sendOilPresInt (int numberToSend) {
   
   Serial1.write(0x5A);                   //Header
   Serial1.write(0xA5);                   //Header
   Serial1.write(2+1+2);                  //Length: VP address + Write command + number low and high bytes
-  Serial1.write(0x82);                   //Write command
+  Serial1.write(0x82);                   //Write command 0x82 for RAM access
   Serial1.write(0x10);                   //Write address to VP address 1010
-  Serial1.write((byte)0x10);             //Write address
-  Serial1.write(highByte(presNumberToSend)); //integer high byte
-  Serial1.write(lowByte(presNumberToSend));  //integer low byte
+  Serial1.write((byte)0x10);             //
+  Serial1.write(highByte(numberToSend)); //integer high byte
+  Serial1.write(lowByte(numberToSend));  //integer low byte
+}
+
+void sendBoostFloat (float floatValue) {
+  
+  Serial1.write(0x5A);                   //Header
+  Serial1.write(0xA5);                   //Header
+  Serial1.write(0x07);                   //Length: VP address + Write command + Length of the float (4 bytes)
+  Serial1.write(0x82);                   //Write command 0x82 for RAM access
+  Serial1.write(0x13);                   //Write address to VP address 1300
+  Serial1.write((byte)0x00);             //Write address
+  //--
+
+  byte hex[4] = {0}; //create a hex array for the 4 bytes
+
+  //Serial.println(floatValue);
+  FloatToHex(floatValue, hex); //Copnvert the float to the hex array
+  Serial1.write(hex[3]); //The order is flipped (endiannes)
+  Serial1.write(hex[2]);
+  Serial1.write(hex[1]);
+  Serial1.write(hex[0]);
+}
+
+void sendLambdaFloat (float floatValue) {
+  
+  Serial1.write(0x5A);                   //Header
+  Serial1.write(0xA5);                   //Header
+  Serial1.write(0x07);                   //Length: VP address + Write command + Length of the float (4 bytes)
+  Serial1.write(0x82);                   //Write command 0x82 for RAM access
+  Serial1.write(0x14);                   //Write address to VP address 1400
+  Serial1.write((byte)0x00);             //Write address
+  //--
+
+  byte hex[4] = {0}; //create a hex array for the 4 bytes
+
+  //Serial.println(floatValue);
+  FloatToHex(floatValue, hex); //Copnvert the float to the hex array
+  Serial1.write(hex[3]); //The order is flipped (endiannes)
+  Serial1.write(hex[2]);
+  Serial1.write(hex[1]);
+  Serial1.write(hex[0]);
 }
 
 void sendBoostInt (int boostNumberToSend) {
@@ -198,11 +241,12 @@ void sendBoostInt (int boostNumberToSend) {
   Serial1.write(0x5A);                   //Header
   Serial1.write(0xA5);                   //Header
   Serial1.write(2+1+2);                  //Length: VP address + Write command + number low and high bytes
-  Serial1.write(0x82);                   //Write command
+  Serial1.write(0x82);                   //Write command 0x82 for RAM access
   Serial1.write(0x12);                   //Write address to VP address 1200
   Serial1.write((byte)0x00);             //Write address
   Serial1.write(highByte(boostNumberToSend)); //integer high byte
   Serial1.write(lowByte(boostNumberToSend));  //integer low byte
+  //Serial.println(boostNumberToSend);
 }
 
 void sendLambdaInt (int presNumberToSend) {
@@ -215,6 +259,26 @@ void sendLambdaInt (int presNumberToSend) {
   Serial1.write((byte)0x50);             //Write address
   Serial1.write(highByte(presNumberToSend)); //integer high byte
   Serial1.write(lowByte(presNumberToSend));  //integer low byte
+}
+
+void sendVoltageFloat (float presFloatValue) {
+  
+  Serial1.write(0x5A);                   //Header
+  Serial1.write(0xA5);                   //Header
+  Serial1.write(0x07);                   //Length: VP address + Write command + Length of the float (4 bytes)
+  Serial1.write(0x82);                   //Write command 0x82 for RAM access
+  Serial1.write(0x10);                   //Write address to VP address 1020
+  Serial1.write((byte)0x20);             //Write address
+  //--
+
+  byte hex[4] = {0}; //create a hex array for the 4 bytes
+
+  //Serial.println(presFloatValue);
+  FloatToHex(presFloatValue, hex); //Copnvert the float to the hex array
+  Serial1.write(hex[3]); //The order is flipped (endiannes)
+  Serial1.write(hex[2]);
+  Serial1.write(hex[1]);
+  Serial1.write(hex[0]);
 }
 
 void sendCoolantInt (int numberToSend) {
@@ -247,82 +311,20 @@ void sendBacklight (int numberToSend) {
   Serial1.write(0xA5);                   //Header
   Serial1.write(2+1+1);                  //Length: address + Write command + brightness level
   Serial1.write(0x82);                   //Write command 0x82 for RAM access
-  Serial1.write((byte)0x00);             //Write address to address 0082
+  Serial1.write((byte)0x00);                   //Write address to address 0082
   Serial1.write((byte)0x82);             //
   Serial1.write(numberToSend);
 }
 
-//                      _ ______ _             _       
-//                     | |  ____| |           | |      
-//   ___  ___ _ __   __| | |__  | | ___   __ _| |_ ___ 
-//  / __|/ _ \ '_ \ / _` |  __| | |/ _ \ / _` | __/ __|
-//  \__ \  __/ | | | (_| | |    | | (_) | (_| | |_\__ \ /*/
-//  |___/\___|_| |_|\__,_|_|    |_|\___/ \__,_|\__|___/
-//                                                    
-void FloatToHex (float f, byte* hex) {
-  byte* f_byte = reinterpret_cast<byte*>(&f); //the value of f_byte is pointer to f
-  memcpy(hex, f_byte, 4);                     //hex: destination, f_byte: source, 4:number of bytes to copy (4 bytes = 32 bit (float))
-}
-
-void sendBoostFloat (float floatValue) {
+void sendGearPosition (char gearPositionToSend) {
   
   Serial1.write(0x5A);                   //Header
   Serial1.write(0xA5);                   //Header
-  Serial1.write(0x07);                  //Length: VP address + Write command + Length of the float (4 bytes)
-  Serial1.write(0x82);                   //Write command
-  Serial1.write(0x13);                   //Write address to VP address 1300
-  Serial1.write((byte)0x00);             //Write address
-  //--
-
-  byte hex[4] = {0}; //create a hex array for the 4 bytes
-
-  //Serial.println(floatValue);
-  FloatToHex(floatValue, hex); //Copnvert the float to the hex array
-  Serial1.write(hex[3]); //The order is flipped (endianess)
-  Serial1.write(hex[2]);
-  Serial1.write(hex[1]);
-  Serial1.write(hex[0]);
-}
-
-
-void sendVoltageFloat (float presFloatValue) {
-  
-  Serial1.write(0x5A);                   //Header
-  Serial1.write(0xA5);                   //Header
-  Serial1.write(0x07);                   //Length: VP address + Write command + Length of the float (4 bytes)
+  Serial1.write(2+1+1);                  //Length: VP address + Write command + single hex string
   Serial1.write(0x82);                   //Write command 0x82 for RAM access
-  Serial1.write(0x10);                   //Write address to VP address 1020
-  Serial1.write((byte)0x20);             //Write address
-  //--
-
-  byte hex[4] = {0}; //create a hex array for the 4 bytes
-
-  //Serial.println(presFloatValue);
-  FloatToHex(presFloatValue, hex); //Copnvert the float to the hex array
-  Serial1.write(hex[3]); //The order is flipped (endiannes)
-  Serial1.write(hex[2]);
-  Serial1.write(hex[1]);
-  Serial1.write(hex[0]);
-}
-
-void sendLambdaFloat (float floatValue) {
-  
-  Serial1.write(0x5A);                   //Header
-  Serial1.write(0xA5);                   //Header
-  Serial1.write(0x07);                   //Length: VP address + Write command + Length of the float (4 bytes)
-  Serial1.write(0x82);                   //Write command 0x82 for RAM access
-  Serial1.write(0x14);                   //Write address to VP address 1400
-  Serial1.write((byte)0x00);             //Write address
-  //--
-
-  byte hex[4] = {0}; //create a hex array for the 4 bytes
-
-  //Serial.println(floatValue);
-  FloatToHex(floatValue, hex); //Copnvert the float to the hex array
-  Serial1.write(hex[3]); //The order is flipped (endiannes)
-  Serial1.write(hex[2]);
-  Serial1.write(hex[1]);
-  Serial1.write(hex[0]);
+  Serial1.write(0x13);                   //Write address to VP address 1370
+  Serial1.write((byte)0x70);             //Write address
+  Serial1.write(gearPositionToSend);     //print gear position
 }
 
 //                      _ ___  _______          _______ _   _ 
@@ -333,31 +335,42 @@ void sendLambdaFloat (float floatValue) {
 //  |___/\___|_| |_|\__,_|____|_____/   \/  \/   |_____|_| \_|                                                                                   
 void send2DWIN() {
 
-  if (millis() - millis17 >= 17) {
-    //floatVoltageValue = something;                //****************to work on  
-    //floatVoltageValue2 = something else etc.      //** */
-    boostInt = (floatVoltageValue * 18);          //** */
-    pressureInt = (floatVoltageValue * 12);       //** */
-    
-    //----------------sending data------------
-    //Oil temp + pres. analogs
+      //Oil Sensors
     sendOilTempInt(steinhart);           //value for oil temp gauge and digital display
     sendOilPresInt(presReading);          //value for oil pressure gauge
     //CAN readings
-    //sendCoolantInt(potReading);           //value for coolant temp digital display
-    //sendAmbientInt(potReading);           //value for ambient temp digital display        
-    //sendBoostFloat(floatBoostAdjusted);   //value for boost digital display
-    //sendLambdaFloat(floatLambdaValue);    //value for lambda digital display
-    //sendBoostInt(potReading);             //value for boost gauge
-    //sendLambdaInt(lambdaInt);             //value for lambda gauge
-    //sendVoltageFloat(floatVoltageValue);  //value for battery voltage digital display
+    sendCoolantInt(coolantTemp);           //value for coolant temp digital display
+    sendAmbientInt(outsideTemp);           //value for ambient temp digital display        
+    sendVoltageFloat(battCAN);  //value for battery voltage digital display
     sendBacklight(backlight);             //value for DWIN LED backlight
-    //----------------------------------------
-    
-    dwinTimer = millis();
-  }
+    sendGearPosition(transGear);
+    //Lambda
+    //sendLambdaInt(lambdaInt);             //value for lambda gauge
+    sendLambdaFloat(floatLambdaValue);    //value for lambda digital display
+    //Boost
+    sendBoostInt(0);//potReading);             //value for boost gauge
+    //sendBoostFloat(floatBoostAdjusted);   //value for boost digital display
+
 }
 
+void readADCs () {
+  //lambda
+  floatLambdaValue = ((((float)lambdaReading)*0.00073313782991202346041055718475073)+0.75);
+  lambdaInt = (-240*(pow(floatLambdaValue,2)) + 780*(floatLambdaValue) - 450);
+  //boost
+  floatBoostValue = (((float)boostReading)*0.02859237536656891495601173020528);
+    if (floatBoostValue <= 14.7) {
+      floatBoostAdjusted = (14.7-floatBoostValue);
+      if (floatBoostAdjusted < 0) {
+        floatBoostAdjusted = 0;
+      }
+    }
+    if (floatBoostValue > 14.7) {
+      floatBoostAdjusted = (floatBoostValue - 14.7);
+    }
+  //Oil Pressure
+  presReading = analogRead(A2);
+}
 
 //   _____ ______ _______ _    _ _____
 //  / ____|  ____|__   __| |  | |  __ \ '/'
@@ -373,14 +386,11 @@ void setup() {
   Serial1.begin(115200);       //need to make sure DWIN CFG set to 115200 baud rate                   
 
   
-  // //setup the CAN bus module
-  // if(CAN0.begin(MCP_STDEXT, CAN_500KBPS, MCP_16MHZ) == CAN_OK) Serial.print("MCP2515 Init Okay!!\r\n");
-  // else Serial.print("MCP2515 Init Failed!!\r\n");
-  // CAN0.init_Mask(0,0,0x010F0000);                // Init first mask...
-  // CAN0.init_Filt(0,0,0x140);                // Init first filter...
-  // CAN0.init_Filt(1,0,0x360);                // Init second filter...
+  //setup the CAN bus module
+  if(CAN0.begin(MCP_STDEXT, CAN_500KBPS, MCP_16MHZ) == CAN_OK) Serial.print("MCP2515 Init Okay!!\r\n");
+  else Serial.print("MCP2515 Init Failed!!\r\n");
   
-  // CAN0.setMode(MCP_LISTENONLY);         // set to listen only mode
+  CAN0.setMode(MCP_LISTENONLY);         // set to listen only mode
 
   millis17 = millis();
   millis50 = millis();
@@ -389,43 +399,8 @@ void setup() {
   delay(250);
 }
 
-
-//  _      ____   ____  _____
-// | |    / __ \ / __ \|  __ \ '/'
-// | |   | |  | | |  | | |__) |
-// | |   | |  | | |  | |  ___/
-// | |___| |__| | |__| | |
-// |______\____/ \____/|_|
-//
-void loop() {
-  
-  // get CAN messages
-  // getMessage();
-  // Serial.print("headlightState = ");
-  // Serial.println(headlightState, BIN);
-  // Serial.print("outsideTemp = ");
-  // Serial.println(outsideTemp);
-  // Serial.print("coolantTemp = ");
-  // Serial.println(coolantTemp);
-  // Serial.print("battCAN = ");
-  // Serial.println(battCAN);
-  // Serial.print("absoluteAir = ");
-  // Serial.println(absoluteAir);
-
-
-
-  //****Oil Temperature Stuff****
-
-  //Serial.println(analogRead(oilTempSensorPin));
-  
-  // if (millis() - millis200 >= 17) {
-    
-  //   millis17 = millis();
-  // }
-
-
-  if (millis() - millis200 >= 200) {
-    //Oil temperature sensor
+void Steinhart() {
+  //Oil temperature sensor
     for (i=0; i<NUMSAMPLES; i++) {                      
       samples[i] = analogRead(oilTempSensorPin);        //takes samples at number defined with a short delay between samples
       }
@@ -439,7 +414,7 @@ void loop() {
     average = (oilTempSensorDivider*average)/(1023-average);           //conversion equation to read resistance from voltage divider
     // Serial.print("Oil Temp Sensor Resistance = ");
     // Serial.println(average);
-    //steinhart equation to estimate temperature value at any resistance from curve of thermistor sensor
+      //steinhart equation to estimate temperature value at any resistance from curve of thermistor sensor
     steinhart = log(average);                     //lnR
     steinhart = pow(steinhart,3);                 //(lnR)^3
     steinhart *= steinconstC;                     //C*((lnR)^3)
@@ -450,43 +425,47 @@ void loop() {
     // Serial.print("Temperature = ");
     // Serial.print(steinhart);                      //prints final temp in celcius
     // Serial.println(" *C");
-
-    //Oil pressure sensor
-    for (i=0; i<NUMSAMPLES; i++) {                      
-      samples[i] =  analogRead(oilPresSensorPin);        //takes samples at number defined with a short delay between samples
-      }
-    presAverage = 0;
-    for (i=0; i< NUMSAMPLES; i++) {
-      presAverage += samples[i];                            //adds all number of samples together - '+=' i.e. num1 += num2 means 'num1 is equal to num1 plus num2'
-      }
-    presAverage /= NUMSAMPLES;
-    presReading = presAverage*0.14662756598240469208211143695015; //conversion from 0-1023 to 0-150
-
-    // //Battery voltage
-    // for (b=0; b<NUMBATTSAMPLES; b++) {                      
-    //   samples[b] = analogRead(battPin);           //takes samples at number defined with a short delay between samples
-    //   }
-    // battAverage= 0;
-    // for (b=0; b< NUMBATTSAMPLES; b++) {
-    //   average += samples[b];                      //adds all number of samples together - '+=' i.e. num1 += num2 means 'num1 is equal to num1 plus num2'
-    //   }                       
-    // average /= NUMBATTSAMPLES;                    //divides by number of samples to output the average
-
-  //   //CAN readings to Serial
-  //   // Serial.print("Headlight State: ");
-  //   // Serial.println(headlightState);
-  //   // Serial.print("Outside Temp: ");
-  //   // Serial.println(outsideTemp);
-  //   // Serial.print("Coolant Temp: ");
-  //   // Serial.println(coolantTemp);
-  //   // Serial.print("CAN Battery voltage: ");
-  //   // Serial.println(battCAN);
-  //   // Serial.print("Absolute MAP: ");
-  //   // Serial.println(absoluteAir);
-    millis200 = millis();
-  }
 }
 
+//  _      ____   ____  _____
+// | |    / __ \ / __ \|  __ \ '/'
+// | |   | |  | | |  | | |__) |
+// | |   | |  | | |  | |  ___/
+// | |___| |__| | |__| | |
+// |______\____/ \____/|_|
+//
+void loop() {
+  
+  if (headlightsON == 1){
+    backlight = 100;
+    }
+    else {
+    backlight = 30;
+    }
+  // get CAN messages
+  // getMessage();
+  // Serial.print("headlightState = ");
+  // Serial.println(headlightState, BIN);
+  // Serial.print("outsideTemp = ");
+  // Serial.println(outsideTemp);
+  // Serial.print("coolantTemp = ");
+  // Serial.println(coolantTemp);
+  // Serial.print("battCAN = ");
+  // Serial.println(battCAN);
+  // Serial.print("absoluteAir = ");
+  // Serial.println(absoluteAir);
 
+  if (millis() - millis17 == 17) {
+    
+    send2DWIN();
 
+    millis17 = millis();
+  }
 
+  if (millis() - millis200 >= 200) {
+
+    Steinhart();
+
+    millis200 = millis();
+  } 
+}
