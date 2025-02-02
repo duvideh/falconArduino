@@ -7,11 +7,17 @@
  *  if you have any questions.
  */
 
-/****OIL PRESSURE SENSOR****/
+//Schematic = 
+//
+//5v > Resistor > A0 > Sensor (sensor+) > GND (sensor-)
+
+/****OIL TEMPERATURE SENSOR****/
 
 
-#define oilPressureSensorDivider 2970   //defines the resistor value that is in series in the voltage divider
-#define oilPressureSensorPin A0         //defines the analog pin of the input voltage from the voltage divider
+#include <Arduino.h>
+#include <math.h>
+#define oilTempSensorDivider 4950   //defines the resistor value that is in series in the voltage divider
+#define oilTempSensorPin A0         //defines the analog pin of the input voltage from the voltage divider
 #define NUMSAMPLES 5                //defines the number of samples to be taken for a smooth average
 
 
@@ -21,15 +27,18 @@ const float steinconstC = -0.0000002163718111393;    //steinhart equation consta
 
 int samples[NUMSAMPLES];                              //variable to store number of samples to be taken
 
-uint8_t i;                                          //integer for loop
+int i;                                          //integer for loop
 float average;                                      //decimal for average
+
+unsigned long millis10 = 0;
 
 void setup() {
   Serial.begin(9600);                                 //start serial monitor
+  millis10 = millis();
 }
 
 void loop() {
-  if (millis10 >= millis() +10) {
+  if (millis() - millis10  >= 10) {
     for (i=0; i<NUMSAMPLES; i++) {                      
       samples[i] = analogRead(oilTempSensorPin);        //takes samples at number defined with a short delay between samples
       }
