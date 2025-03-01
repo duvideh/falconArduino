@@ -60,7 +60,7 @@ unsigned char rxBuf[8];
 int outsideTemp = 0;
 int coolantTemp = 0;
 int headlightState = 0; // 02 for manually activated headlights, 03 for headlights auto-triggered
-bool headlightsON = 0;   // state of dimming
+bool headlightsON = 1;   // state of dimming
 int battCAN = 0;
 char transGear;
 //int absoluteAir = 0;
@@ -91,6 +91,7 @@ float lambdaReading = 2.5;          //5v input from Lambda controller
 float boostReading;                 //not sure yet - input from MAP sensor maybe?
 
 //millis
+unsigned long millis2 = 0;
 unsigned long millis17 = 0;
 unsigned long millis50 = 0;
 unsigned long millis200 = 0;
@@ -130,27 +131,35 @@ void getMessage (void) {
   if (rxId == 0x3E9) {
     if (rxBuf[6] == 12) {
       transGear = 0x52; //R
+      gearPosition = 8;
     }
     else if (rxBuf[6] == 00) {
       transGear = 0x4E; //N
+      gearPosition = 7;
     }
     else if (rxBuf[6] == 01) {
       transGear = 0x31; //1
+      gearPosition = 1;
     }
     else if (rxBuf[6] == 02) {
       transGear = 0x32; //2
+      gearPosition = 2;
     }
     else if (rxBuf[6] == 03) {
       transGear = 0x33; //3
+      gearPosition = 3;
     }
     else if (rxBuf[6] == 04) {
       transGear = 0x34; //4
+      gearPosition = 4;
     }
     else if (rxBuf[6] == 05) {
       transGear = 0x35; //5
+      gearPosition = 5;
     }
     else if (rxBuf[6] == 06) {
       transGear = 0x36; //6
+      gearPosition = 6;
     } 
   }  
   if (rxId == 0x427) {
@@ -435,31 +444,33 @@ void Steinhart() {
 //
 void loop() {
   
-  if (headlightsON == 1){
-    backlight = 100;
-    }
-    else {
-    backlight = 30;
-    }
-  // get CAN messages
-  // getMessage();
-  // Serial.print("headlightState = ");
-  // Serial.println(headlightState, BIN);
-  // Serial.print("outsideTemp = ");
-  // Serial.println(outsideTemp);
-  // Serial.print("coolantTemp = ");
-  // Serial.println(coolantTemp);
-  // Serial.print("battCAN = ");
-  // Serial.println(battCAN);
-  // Serial.print("absoluteAir = ");
-  // Serial.println(absoluteAir);
+  if (millis() - millis2 >= 2) {
+    //**get CAN messages
+    getMessage();
+    // Serial.print("headlightState = ");
+    // Serial.println(headlightState, BIN);
+    // Serial.print("outsideTemp = ");
+    // Serial.println(outsideTemp);
+    // Serial.print("coolantTemp = ");
+    // Serial.println(coolantTemp);
+    // Serial.print("battCAN = ");
+    // Serial.println(battCAN);
+    // Serial.print("Gear: ");
+    // Serial.println(gearPosition);
+    // Serial.println("**********");
+    // Serial.print("absoluteAir = ");
+    // Serial.println(absoluteAir);
+    
+    if (headlightsON == 1){
+      backlight = 100;
+      }
+      else {
+      backlight = 30;
+      }
 
-  //write Serial1 output to Serial monitor
-  // if (Serial1.available()){
-  //   int inByte = Serial1.read();
-  //   Serial.write(inByte);
-  //   }
-
+    millis2 = millis();
+  }
+  
 
   if (millis() - millis17 >= 17) {
     
@@ -474,4 +485,10 @@ void loop() {
     //Serial.println("testing2");
     millis200 = millis();
   } 
+
+  //**copy Serial1 output to Serial monitor
+  // if (Serial1.available()){
+  //   int inByte = Serial1.read();
+  //   Serial.write(inByte);
+  //   }
 }
