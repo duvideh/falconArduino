@@ -53,7 +53,7 @@ float battAverage;
 float presAverage;                
 
 //CAN bus
-MCP_CAN CAN0(10); // bracketed number is number of CS pin
+MCP_CAN CAN0(10); // bracketed number is number of CS pin // SI(11),SO(12),SCK(13),INT - not necessary but plugged into D20
 long unsigned int rxId;
 unsigned char len = 0;
 unsigned char rxBuf[8];
@@ -86,7 +86,7 @@ float floatBoostValue = 0.0;        //remapped range from adc to 0-30
 float floatBoostAdjusted = 0.0;     //parameter to invert values <=14.7 
 float floatLambdaValue = 0.0;       //remapped range from adc to 0.75-1.5
 float floatReading = 0.00;          //conversion from adc reading integer into float
-int gearPosition;                   //gear position in text - R, N, 1, 2, 3, 4, 5, 6
+int   gearPosition;                   //gear position in text - R, N, 1, 2, 3, 4, 5, 6
 float lambdaReading = 2.5;          //5v input from Lambda controller
 float boostReading;                 //not sure yet - input from MAP sensor maybe?
 
@@ -346,7 +346,7 @@ void send2DWIN() {
     sendGearPosition(transGear);
     //Lambda
     //sendLambdaInt(lambdaInt);             //value for lambda gauge
-    sendLambdaFloat(floatLambdaValue);    //value for lambda digital display
+    //sendLambdaFloat(floatLambdaValue);    //value for lambda digital display
     //Boost
     sendBoostInt(0);//potReading);             //value for boost gauge
     //sendBoostFloat(floatBoostAdjusted);   //value for boost digital display
@@ -385,7 +385,6 @@ void setup() {
   Serial.begin(9600);
   Serial1.begin(115200);       //need to make sure DWIN CFG set to 115200 baud rate                   
 
-  
   //setup the CAN bus module
   if(CAN0.begin(MCP_STDEXT, CAN_500KBPS, MCP_16MHZ) == CAN_OK) Serial.print("MCP2515 Init Okay!!\r\n");
   else Serial.print("MCP2515 Init Failed!!\r\n");
@@ -455,17 +454,24 @@ void loop() {
   // Serial.print("absoluteAir = ");
   // Serial.println(absoluteAir);
 
-  if (millis() - millis17 == 17) {
+  //write Serial1 output to Serial monitor
+  // if (Serial1.available()){
+  //   int inByte = Serial1.read();
+  //   Serial.write(inByte);
+  //   }
+
+
+  if (millis() - millis17 >= 17) {
     
     send2DWIN();
-
+    //Serial.println("testing");
     millis17 = millis();
   }
 
   if (millis() - millis200 >= 200) {
 
     Steinhart();
-
+    //Serial.println("testing2");
     millis200 = millis();
   } 
 }
