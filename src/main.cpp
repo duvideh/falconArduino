@@ -30,6 +30,7 @@
 // 
 // 
 
+//libraries
 #include <Arduino.h>
 #include <math.h>
 #include <mcp_can.h> //library: coryjfowler/mcp_can
@@ -44,13 +45,15 @@ const float steinconstA = 0.0004133244513630420;        //steinhart equation con
 const float steinconstB = 0.0002939949352019070;        //steinhart equation constant B, determined from wikipedia equations
 const float steinconstC = -0.0000002163718111393;       //steinhart equation constant C, determined from wikipedia equations
 int samples[NUMSAMPLES];                                //variable to store number of samples to be taken for oil temperature reading
-int samplesPres [NUMSAMPLES];                           //variable to store number of samples to be taken for oil pressure reading
 float steinhart;                                        //variable for steinhart equation - final oil temperature reading
 uint8_t i;
 uint8_t b;                                          //integer for loop
 float average;                                      //decimal for average
-float battAverage;
 float presAverage;                
+const int presArraySize = 10;
+int presArray[presArraySize];
+int presAvg = 0;
+int j = 0;
 
 //CAN bus
 MCP_CAN CAN0(10); // bracketed number is number of CS pin // SI(11),SO(12),SCK(13),INT - not necessary but plugged into D20
@@ -59,12 +62,13 @@ unsigned char len = 0;
 unsigned char rxBuf[8];
 int outsideTemp = 0;
 int coolantTemp = 0;
-int headlightState = 0; // 02 for manually activated headlights, 03 for headlights auto-triggered
-bool headlightsON = 1;   // state of dimming
-int battCAN = 0;
-char transGear;
+uint16_t dimmerState;
+bool dimmer = 1;   // state of dimming
+float battCAN = 0;
+char transGear = 0x4E;
 //int absoluteAir = 0;
 //int MAPvalue = 0;
+
 
 // //battery voltage 
 // #define battPin A3
@@ -89,6 +93,10 @@ float floatReading = 0.00;          //conversion from adc reading integer into f
 int   gearPosition;                   //gear position in text - R, N, 1, 2, 3, 4, 5, 6
 float lambdaReading = 2.5;          //5v input from Lambda controller
 float boostReading;                 //not sure yet - input from MAP sensor maybe?
+
+//backlight levels
+int backlightFull = 100;
+int backlightDimmed = 10;
 
 //millis
 unsigned long millis2 = 0;
@@ -116,17 +124,28 @@ unsigned long millis200 = 0;
 void getMessage (void) {   
 
   CAN0.readMsgBuf(&rxId, &len, rxBuf); // Read data: len = data length, buf = data byte(s)
+  // char msgString[128];
+  // sprintf(msgString, "Standard ID: 0x%.3lX       DLC: %1d  Data:", rxId, len);
+  // Serial.println(msgString);
+
   if (rxId == 0x128) {
-    headlightState = rxBuf[0]; //(rxBuf[0] & 0x02); //need to see reading first - autoheadlightson is 0x01, headlightson is 0x02
-    if (headlightState == 02 || 03) {
-      headlightsON = 1;
+    uint16_t dimmerByte = (rxBuf[1]); //in hex, 0xD6 = cluster not dimmed, 0x08 = dimmed 
+    //Serial.println(headlightByte,HEX);
+    //Serial.println(dimmerByte,HEX);
+
+    dimmerState = (dimmerByte); //8 = dimmed, 214 = not dimmed
+    //Serial.println(dimmerState);
+    if (dimmerState == 214) {
+      dimmer = 1;
     }
     else {
-      headlightsON = 0;
+      dimmer = 0;
       }
     }
+
   if (rxId == 0x353) {
-    outsideTemp = (rxBuf[4],DEC);
+    outsideTemp = (rxBuf[4]);
+    //Serial.println(rxBuf[4]);
     }
   if (rxId == 0x3E9) {
     if (rxBuf[6] == 12) {
@@ -163,8 +182,11 @@ void getMessage (void) {
     } 
   }  
   if (rxId == 0x427) {
-    coolantTemp = (rxBuf[0],DEC)-40;  //-40 offset 
-    battCAN = (rxBuf[3],DEC)*0.1;  
+    coolantTemp = (rxBuf[0])-40;  //-40 offset
+    battCAN = (rxBuf[3])*0.1;  
+    //Serial.print(rxBuf[0]);
+    //Serial.print(",");
+    //Serial.println(rxBuf[3]);
     }
 }
 
@@ -346,7 +368,7 @@ void send2DWIN() {
 
       //Oil Sensors
     sendOilTempInt(steinhart);           //value for oil temp gauge and digital display
-    sendOilPresInt(presReading);          //value for oil pressure gauge
+    sendOilPresInt(presAvg);          //value for oil pressure gauge
     //CAN readings
     sendCoolantInt(coolantTemp);           //value for coolant temp digital display
     sendAmbientInt(outsideTemp);           //value for ambient temp digital display        
@@ -377,34 +399,22 @@ void readADCs () {
     if (floatBoostValue > 14.7) {
       floatBoostAdjusted = (floatBoostValue - 14.7);
     }
-  //Oil Pressure
-  presReading = analogRead(A2);
+
 }
 
-//   _____ ______ _______ _    _ _____
-//  / ____|  ____|__   __| |  | |  __ \ '/'
-// | (___ | |__     | |  | |  | | |__) |
-//  \___ \|  __|    | |  | |  | |  ___/
-//  ____) | |____   | |  | |__| | | 
-// |_____/|______|  |_|   \____/|_|
-//
-void setup() {
+void getOilPressure () {
 
-  //setup Serials
-  Serial.begin(9600);
-  Serial1.begin(115200);       //need to make sure DWIN CFG set to 115200 baud rate                   
+  presReading = map(analogRead(A2), 103, 1023, 0, 145);
+  presArray[j] = (presReading);
+  j++;
+  if (j > presArraySize - 1) {
+    j = 0;
+    }
+  for (int a = 0; a < presArraySize - 1; a++) {
+    presAvg += presArray[a];
+    }
+  presAvg = presAvg / presArraySize;
 
-  //setup the CAN bus module
-  if(CAN0.begin(MCP_STDEXT, CAN_500KBPS, MCP_16MHZ) == CAN_OK) Serial.print("MCP2515 Init Okay!!\r\n");
-  else Serial.print("MCP2515 Init Failed!!\r\n");
-  
-  CAN0.setMode(MCP_LISTENONLY);         // set to listen only mode
-
-  millis17 = millis();
-  millis50 = millis();
-  millis200 = millis();
-  
-  delay(250);
 }
 
 void Steinhart() {
@@ -435,6 +445,33 @@ void Steinhart() {
     // Serial.println(" *C");
 }
 
+//   _____ ______ _______ _    _ _____
+//  / ____|  ____|__   __| |  | |  __ \ '/'
+// | (___ | |__     | |  | |  | | |__) |
+//  \___ \|  __|    | |  | |  | |  ___/
+//  ____) | |____   | |  | |__| | | 
+// |_____/|______|  |_|   \____/|_|
+//
+void setup() {
+
+  //setup Serials
+  Serial.begin(9600);
+  Serial1.begin(115200);       //need to make sure DWIN CFG set to 115200 baud rate                   
+
+  //setup the CAN bus module
+  if(CAN0.begin(MCP_STDEXT, CAN_500KBPS, MCP_8MHZ) == CAN_OK) Serial.print("MCP2515 Init Okay!!\r\n");
+  else Serial.print("MCP2515 Init Failed!!\r\n");
+  
+  CAN0.setMode(MCP_LISTENONLY);         // set to listen only mode
+
+  millis17 = millis();
+  millis50 = millis();
+  millis200 = millis();
+  
+  delay(250);
+}
+
+
 //  _      ____   ____  _____
 // | |    / __ \ / __ \|  __ \ '/'
 // | |   | |  | | |  | | |__) |
@@ -447,27 +484,16 @@ void loop() {
   if (millis() - millis2 >= 2) {
     //**get CAN messages
     getMessage();
-    // Serial.print("headlightState = ");
-    // Serial.println(headlightState, BIN);
-    // Serial.print("outsideTemp = ");
-    // Serial.println(outsideTemp);
-    // Serial.print("coolantTemp = ");
-    // Serial.println(coolantTemp);
-    // Serial.print("battCAN = ");
-    // Serial.println(battCAN);
-    // Serial.print("Gear: ");
-    // Serial.println(gearPosition);
-    // Serial.println("**********");
-    // Serial.print("absoluteAir = ");
-    // Serial.println(absoluteAir);
     
-    if (headlightsON == 1){
-      backlight = 100;
+    if (dimmer == 1){
+      backlight = backlightFull;
       }
-      else {
-      backlight = 30;
+    else {
+      backlight = backlightDimmed;
       }
 
+    getOilPressure();
+    //Serial.println(presReading);
     millis2 = millis();
   }
   
@@ -484,6 +510,21 @@ void loop() {
     Steinhart();
     //Serial.println("testing2");
     millis200 = millis();
+
+    // Serial.print("headlightState = ");
+    // Serial.println(headlightState, BIN);
+    // Serial.print("outsideTemp = ");
+    // Serial.println(outsideTemp);
+    // Serial.print("coolantTemp = ");
+    // Serial.println(coolantTemp);
+    // Serial.print("battCAN = ");
+    // Serial.println(battCAN);
+    // Serial.print("Gear: ");
+    // Serial.println(gearPosition);
+    // // Serial.print("absoluteAir = ");
+    // // Serial.println(absoluteAir);
+    // Serial.println("**********");
+
   } 
 
   //**copy Serial1 output to Serial monitor
